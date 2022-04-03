@@ -187,6 +187,7 @@ def get_table_sql(table_name, schema, wrds_id=None, fpath=None, \
 
 def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
                      drop="", keep="", fix_cr = False, 
+                     start_date="", end_date=f'{pd.Timestamp.today():%m%b%Y}', firms="",
                      fix_missing = False, obs="", rename=""):
     if fix_cr:
         fix_missing = True;
@@ -204,16 +205,15 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
         libname_stmt = "libname %s '%s';" % (schema, rpath)
     else:
         libname_stmt = ""
-
     if rename != '':
         rename_str = " rename=(" + rename + ")"
     else:
         rename_str = ""
 
-    if fix_missing or drop != '' or obs != '' or keep !='':
+    if fix_missing or drop != '' or obs != '' or keep !='' or start_date != '' or end_date!=f'{pd.Timestamp.today():%m%b%Y}' or firms!=[]:
         # If need to fix special missing values, then convert them to
         # regular missing values, then run PROC EXPORT
-        if table_name == "dsf":
+        if table_name == "dsf" and ((keep.lower().find('numtrd') != -1) or (drop.lower().find('numtrd') == -1)):
             dsf_fix = "format numtrd 8.;\n"
         else:
             dsf_fix = ""
@@ -222,7 +222,7 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
             obs_str = " obs=" + str(obs)
         else:
             obs_str = ""
-
+        
         drop_str = "drop=" + drop + " "
         keep_str = "keep=" + keep + " "
         
@@ -235,6 +235,41 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
         else:
             sas_table = table_name
 
+        where = ''
+        if start_date != '' or end_date==f'{pd.Timestamp.today():%m%b%Y}' or firms=="":
+            if start_date != "":
+                start_date = pd.to_datetime(start_date)
+                start_date = start_date.strftime('%d%b%Y')
+                if schema == 'comp':
+                    start_date_str = f" datadate >='{start_date}'d AND"
+                else:
+                    start_date_str = f" date >='{start_date}'d AND"
+                where = 'WHERE' + start_date_str[:-4]
+            else:
+                start_date_str = ''
+            
+            if end_date!=f'{pd.Timestamp.today():%m%b%Y}':
+                end_date = pd.to_datetime(end_date)
+                end_date = end_date.strftime('%d%b%Y')
+                if schema == 'comp':
+                    end_date_str = f" datadate <='{end_date}'d AND"
+                else:
+                    end_date_str = f" date <='{end_date}'d AND"
+                where = 'WHERE' + start_date_str + end_date_str[:-4]
+            else:
+                end_date_str = ''
+            
+            if firms!=[]:
+                if type(firms) != str:
+                    firms = [str(x) for x in firms]
+                    firms = ' '.join(firms)
+                if schema == 'comp':
+                    firms_str = f" gvkey in ({firms})"
+                else:
+                    firms_str = f" permno in ({firms})"
+                where = 'WHERE' + start_date_str + end_date_str + firms_str
+                
+            
         if table_name == "fund_names":
             fund_names_fix = """
                 proc sql;
@@ -256,7 +291,8 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
 
             * Fix missing values;
             data %s;
-                set %s.%s; 
+                set %s.%s;
+                %s;
 
                 * dsf_fix;
                 %s
@@ -277,7 +313,7 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
             proc export data=%s(encoding="wlatin1") outfile=stdout dbms=csv;
             run;"""
         sas_code = sas_template % (libname_stmt, new_table, 
-                                    schema, sas_table, dsf_fix,
+                                    schema, sas_table, where, dsf_fix,
                                    fix_cr_code, fund_names_fix, new_table)
                                    
     else:
@@ -294,12 +330,12 @@ def get_wrds_process(table_name, schema, wrds_id=None, fpath=None, rpath=None,
     return(p)
 
 def wrds_to_pandas(table_name, schema, wrds_id, rename="", 
-                   drop="", obs=None, encoding=None):
+                   drop="", start_date=None, end_date=None, firms=None, obs=None, encoding=None):
 
     if not encoding:
         encoding = "utf-8"
 
-    p = get_wrds_process(table_name, schema, wrds_id, drop=drop, rename=rename, obs=obs)
+    p = get_wrds_process(table_name, schema, wrds_id, drop=drop, rename=rename, start_date=start_date, end_date=end_date, firms=firms, obs=obs)
     df = pd.read_csv(StringIO(p.read().decode(encoding)))
     df.columns = map(str.lower, df.columns)
     p.close()
@@ -369,6 +405,7 @@ def set_table_comment(table_name, schema, comment, engine):
 def wrds_to_pg(table_name, schema, engine, wrds_id=None,
                fpath=None, rpath=None, fix_missing=False, fix_cr=False, 
                drop="", obs="", rename="", keep="",
+               start_date="", end_date=f'{pd.Timestamp.today():%m%b%Y}', firms=[],
                alt_table_name = None, encoding=None, col_types=None, create_roles=True):
 
     if not alt_table_name:
@@ -401,6 +438,7 @@ def wrds_to_pg(table_name, schema, engine, wrds_id=None,
     p = get_wrds_process(table_name=table_name, fpath=fpath, rpath=rpath,
                                  schema=schema, wrds_id=wrds_id,
                                  drop=drop, keep=keep, fix_cr=fix_cr, fix_missing=fix_missing, 
+                                 start_date=start_date, end_date=end_date, firms=firms,
                                  obs=obs, rename=rename)
 
     res = wrds_process_to_pg(alt_table_name, schema, engine, p, encoding)
@@ -442,7 +480,8 @@ def wrds_process_to_pg(table_name, schema, engine, p, encoding=None):
     return True
 
 def wrds_update(table_name, schema, host=os.getenv("PGHOST"), dbname=os.getenv("PGDATABASE"), engine=None, 
-        wrds_id=os.getenv("WRDS_ID"), rpath=None, fpath=None, force=False, fix_missing=False, fix_cr=False, drop="", keep="", 
+        wrds_id=os.getenv("WRDS_ID"), rpath=None, fpath=None, force=False, fix_missing=False, fix_cr=False, drop="", keep="",
+        start_date="", end_date=f'{pd.Timestamp.today():%m%b%Y}', firms=[],
         obs="", rename="", alt_table_name=None, encoding=None, col_types=None, create_roles=True):
           
     if not alt_table_name:
@@ -484,7 +523,9 @@ def wrds_update(table_name, schema, host=os.getenv("PGHOST"), dbname=os.getenv("
             print("Getting from WRDS.\n")
         wrds_to_pg(table_name=table_name, schema=schema, engine=engine, wrds_id=wrds_id,
                 rpath=rpath, fpath=fpath, fix_missing=fix_missing, fix_cr=fix_cr,
-                drop=drop, keep=keep, obs=obs, rename=rename, alt_table_name=alt_table_name,
+                drop=drop, keep=keep, 
+                start_date=start_date, end_date=end_date, firms=firms,
+                obs=obs, rename=rename, alt_table_name=alt_table_name,
                 encoding=encoding, col_types=col_types, create_roles=create_roles)
         set_table_comment(alt_table_name, schema, modified, engine)
         
