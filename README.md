@@ -10,7 +10,7 @@ The software uses Python 3 and depends on Pandas, SQLAlchemy and Paramiko. In ad
 These dependencies are installed when you use Pip (see instructions below).
 
 ### 2. A WRDS ID
-To use public-key authentication to access WRDS, follow hints taken from [here](https://debian-administration.org/article/152/Password-less_logins_with_OpenSSH) to set up a public key.
+To use public-key authentication to access WRDS, follow hints taken from [here](https://linuxize.com/post/how-to-setup-passwordless-ssh-login/) to set up a public key.
 Copy that key to the WRDS server from the terminal on your computer. 
 (Note that this code assumes you have a directory `.ssh` in your home directory. If not, log into WRDS via SSH, then type `mkdir ~/.ssh` to create this.) 
 Here's code (for me) to create the key and send it to WRDS:
